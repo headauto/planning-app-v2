@@ -183,7 +183,7 @@ export default async function handler(req, res) {
     })
   } catch (error) {
     console.error(
-      "Capacity Plan report retrieval failed:"
+      "Capacity Plan report retrieval failed:",
       error
     )
 
