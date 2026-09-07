@@ -34,6 +34,32 @@ const isReportingRequest = (selected) =>
     REPORTING_COLLECTIONS.has(collectionName)
   )
 
+const parseBooleanParameter = (value) => {
+  if (value === undefined) {
+    return {
+      valid: true,
+      value: null,
+    }
+  }
+
+  if (
+    typeof value !== "string" ||
+    !["true", "false"].includes(
+      value.toLowerCase()
+    )
+  ) {
+    return {
+      valid: false,
+      value: null,
+    }
+  }
+
+  return {
+    valid: true,
+    value: value.toLowerCase() === "true",
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.setHeader("Allow", ["GET"])
@@ -75,7 +101,7 @@ export default async function handler(req, res) {
   ) {
     return res.status(400).json({
       message:
-        "The selected structures are invalid.",
+        " selected structures are invalid.",
       data: null,
     })
   }
@@ -93,15 +119,32 @@ export default async function handler(req, res) {
     })
   }
 
+  const activeParameter =
+    parseBooleanParameter(req.query.active)
+
+  if (!activeParameter.valid) {
+    return res.status(400).json({
+      message:
+        " active parameter must be true or false.",
+      data: null,
+    })
+  }
+
+  if (
+    activeParameter.value !== null &&
+    !selected.includes("capPlans")
+  ) {
+    return res.status(400).json({
+      message:
+        " active parameter can only be used when capPlans is selected.",
+      data: null,
+    })
+  }
+
   try {
     const { db } = await connectToDatabase()
 
     if (isReportingRequest(selected)) {
-      /*
-      * Reporting API keys are accepted when every requested
-      * structure is included in the reporting allowlist.
-      * Employee sessions remain supported.
-      */
       const authorization =
         await authorizeReportingRead(db, req)
 
@@ -114,10 +157,6 @@ export default async function handler(req, res) {
           })
       }
     } else {
-      /*
-       * All other structure requests require an
-       * authenticated Planning App employee session.
-       */
       const verification = await verifySession(
         db,
         req.headers.authorization
@@ -149,9 +188,17 @@ export default async function handler(req, res) {
     const output = {}
 
     for (const collectionName of selected) {
+      const collectionFilter =
+        collectionName === "capPlans" &&
+        activeParameter.value !== null
+          ? {
+              active: activeParameter.value,
+            }
+          : {}
+
       output[collectionName] = await db
         .collection(collectionName)
-        .find({})
+        .find(collectionFilter)
         .sort({ name: 1 })
         .toArray()
     }
