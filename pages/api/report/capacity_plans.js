@@ -1,12 +1,49 @@
 import { connectToDatabase } from "../../../lib/mongodb"
 import { authorizeReportingRead } from "../../../lib/reportingAuthentication"
 
+const parseBooleanParameter = (value) => {
+  if (value === undefined) {
+    return {
+      valid: true,
+      value: null,
+    }
+  }
+
+  if (
+    typeof value !== "string" ||
+    !["true", "false"].includes(
+      value.toLowerCase()
+    )
+  ) {
+    return {
+      valid: false,
+      value: null,
+    }
+  }
+
+  return {
+    valid: true,
+    value: value.toLowerCase() === "true",
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.setHeader("Allow", ["GET"])
 
     return res.status(405).json({
       message: "Method not allowed. Use GET only.",
+      data: null,
+    })
+  }
+
+  const activeParameter =
+    parseBooleanParameter(req.query.active)
+
+  if (!activeParameter.valid) {
+    return res.status(400).json({
+      message:
+        "The active parameter must be true or false.",
       data: null,
     })
   }
@@ -26,102 +63,113 @@ export default async function handler(req, res) {
         })
     }
 
+    const pipeline = [
+      ...(activeParameter.value === null
+        ? []
+        : [
+            {
+              $match: {
+                active: activeParameter.value,
+              },
+            },
+          ]),
+      {
+        $addFields: {
+          lobObjId: {
+            $convert: {
+              input: "$lob",
+              to: "objectId",
+              onError: null,
+              onNull: null,
+            },
+          },
+          languageObjId: {
+            $convert: {
+              input: "$language",
+              to: "objectId",
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "lobs",
+          localField: "lobObjId",
+          foreignField: "_id",
+          as: "lobDoc",
+        },
+      },
+      {
+        $lookup: {
+          from: "languages",
+          localField: "languageObjId",
+          foreignField: "_id",
+          as: "langDoc",
+        },
+      },
+      {
+        $addFields: {
+          lobDoc: {
+            $arrayElemAt: ["$lobDoc", 0],
+          },
+          langDoc: {
+            $arrayElemAt: ["$langDoc", 0],
+          },
+        },
+      },
+      {
+        $addFields: {
+          projectObjId: {
+            $convert: {
+              input: "$lobDoc.project",
+              to: "objectId",
+              onError: null,
+              onNull: null,
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "projects",
+          localField: "projectObjId",
+          foreignField: "_id",
+          as: "projDoc",
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          Project_Name: {
+            $arrayElemAt: ["$projDoc.name", 0],
+          },
+          Project_BU: {
+            $arrayElemAt: ["$projDoc.bUnit", 0],
+          },
+          Lob_Name: "$lobDoc.name",
+          CapPlan_Name: "$name",
+          Language: "$langDoc.set",
+          Country: "$country",
+          Operation_Days: "$operationDays",
+          FTEHours_Weekly: "$fteHoursWeekly",
+          Pricing_Model: "$pricingModel",
+          Active: "$active",
+        },
+      },
+      {
+        $sort: {
+          Project_Name: 1,
+          Lob_Name: 1,
+          CapPlan_Name: 1,
+        },
+      },
+    ]
+
     const output = await db
       .collection("capPlans")
-      .aggregate([
-        {
-          $addFields: {
-            lobObjId: {
-              $convert: {
-                input: "$lob",
-                to: "objectId",
-                onError: null,
-                onNull: null,
-              },
-            },
-            languageObjId: {
-              $convert: {
-                input: "$language",
-                to: "objectId",
-                onError: null,
-                onNull: null,
-              },
-            },
-          },
-        },
-        {
-          $lookup: {
-            from: "lobs",
-            localField: "lobObjId",
-            foreignField: "_id",
-            as: "lobDoc",
-          },
-        },
-        {
-          $lookup: {
-            from: "languages",
-            localField: "languageObjId",
-            foreignField: "_id",
-            as: "langDoc",
-          },
-        },
-        {
-          $addFields: {
-            lobDoc: {
-              $arrayElemAt: ["$lobDoc", 0],
-            },
-            langDoc: {
-              $arrayElemAt: ["$langDoc", 0],
-            },
-          },
-        },
-        {
-          $addFields: {
-            projectObjId: {
-              $convert: {
-                input: "$lobDoc.project",
-                to: "objectId",
-                onError: null,
-                onNull: null,
-              },
-            },
-          },
-        },
-        {
-          $lookup: {
-            from: "projects",
-            localField: "projectObjId",
-            foreignField: "_id",
-            as: "projDoc",
-          },
-        },
-        {
-          $project: {
-            _id: 1,
-            Project_Name: {
-              $arrayElemAt: ["$projDoc.name", 0],
-            },
-            Project_BU: {
-              $arrayElemAt: ["$projDoc.bUnit", 0],
-            },
-            Lob_Name: "$lobDoc.name",
-            CapPlan_Name: "$name",
-            Language: "$langDoc.set",
-            Country: "$country",
-            Operation_Days: "$operationDays",
-            FTEHours_Weekly: "$fteHoursWeekly",
-            Pricing_Model: "$pricingModel",
-            Active: "$active",
-          },
-        },
-        {
-          $sort: {
-            Project_Name: 1,
-            Lob_Name: 1,
-            CapPlan_Name: 1,
-          },
-        },
-      ])
+      .aggregate(pipeline)
       .toArray()
 
     res.setHeader(
